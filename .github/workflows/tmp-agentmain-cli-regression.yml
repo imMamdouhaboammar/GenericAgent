@@ -6,7 +6,7 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   test:
@@ -20,3 +20,52 @@ jobs:
         run: python -m pip install -e .
       - name: Run CLI argument regression tests
         run: python -m unittest tests.test_agentmain_cli_args -v
+
+  patch:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/agentmain-reject-unknown-cli
+      - id: need
+        name: Check whether CLI guard is needed
+        run: |
+          if grep -q 'reflect extra arguments must be --key value pairs' agentmain.py; then
+            echo 'apply=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'apply=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-python@v5
+        if: steps.need.outputs.apply == 'true'
+        with:
+          python-version: "3.12"
+      - name: Reject unsupported CLI extras outside reflect mode
+        if: steps.need.outputs.apply == 'true'
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('agentmain.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''    args, _unknown = parser.parse_known_args()\n    _extra_args = dict(zip([k.lstrip('-') for k in _unknown[::2]], _unknown[1::2])) if _unknown else {}\n'''
+          new = '''    args, _unknown = parser.parse_known_args()\n    if _unknown and not args.reflect:\n        parser.error(f"unrecognized arguments: {' '.join(_unknown)}")\n    if args.reflect and (len(_unknown) % 2 or any(not k.startswith('--') for k in _unknown[::2])):\n        parser.error("reflect extra arguments must be --key value pairs")\n    _extra_args = dict(zip([k.lstrip('-') for k in _unknown[::2]], _unknown[1::2])) if _unknown else {}\n'''
+          if old not in text:
+              raise SystemExit('expected parser block not found')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+      - name: Verify patch
+        if: steps.need.outputs.apply == 'true'
+        run: |
+          python -m py_compile agentmain.py tests/test_agentmain_cli_args.py
+          python -m pip install -e .
+          python -m unittest tests.test_agentmain_cli_args -v
+          git diff --check
+      - name: Commit patch
+        if: steps.need.outputs.apply == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add agentmain.py
+          git commit -m "fix(cli): reject unsupported agentmain arguments"
+          git push origin HEAD:fix/agentmain-reject-unknown-cli
