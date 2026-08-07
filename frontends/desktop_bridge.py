@@ -1399,26 +1399,44 @@ async def ws_handler(request):
 # Transport layer: HTTP command/data API
 # ---------------------------------------------------------------------------
 
-def cors_headers():
+def _origin_matches_host(request, origin: str) -> bool:
+    if not origin:
+        return True
+    from urllib.parse import urlsplit
+    try:
+        parsed = urlsplit(origin)
+    except ValueError:
+        return False
+    return parsed.scheme in ("http", "https") and parsed.netloc.lower() == request.host.lower()
+
+
+def cors_headers(origin: str = ""):
+    if not origin:
+        return {}
     return {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type",
+        "Vary": "Origin",
     }
 
 
 @web.middleware
 async def cors_middleware(request, handler):
+    origin = request.headers.get("Origin", "")
+    if origin and not _origin_matches_host(request, origin):
+        return web.json_response({"ok": False, "error": "cross-origin request rejected"}, status=403)
+    headers = cors_headers(origin)
     if request.method == "OPTIONS":
-        return web.Response(status=204, headers=cors_headers())
+        return web.Response(status=204, headers=headers)
     resp = await handler(request)
-    for k, v in cors_headers().items():
+    for k, v in headers.items():
         resp.headers[k] = v
     return resp
 
 
 def json_ok(data: dict, status: int = 200):
-    return web.json_response(data, status=status, headers=cors_headers(), dumps=lambda x: json.dumps(x, ensure_ascii=False, default=str))
+    return web.json_response(data, status=status, dumps=lambda x: json.dumps(x, ensure_ascii=False, default=str))
 
 
 async def read_json(request) -> dict:
