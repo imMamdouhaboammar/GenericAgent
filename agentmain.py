@@ -218,7 +218,7 @@ if __name__ == '__main__':
     args, _unknown = parser.parse_known_args()
     if _unknown and not args.reflect:
         parser.error(f"unrecognized arguments: {' '.join(_unknown)}")
-    if args.reflect and (len(_unknown) % 2 or any(not k.startswith('--') for k in _unknown[::2])):
+    if args.reflect and (len(_unknown) % 2 or any(not k.startswith('--') for k in _unknown[::2]) or any(v.startswith('--') for v in _unknown[1::2])):
         parser.error("reflect extra arguments must be --key value pairs")
     _extra_args = dict(zip([k.lstrip('-') for k in _unknown[::2]], _unknown[1::2])) if _unknown else {}
 
