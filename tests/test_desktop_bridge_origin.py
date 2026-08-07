@@ -24,7 +24,7 @@ class DesktopBridgeOriginTests(unittest.IsolatedAsyncioTestCase):
         app = web.Application(middlewares=[bridge.cors_middleware])
 
         async def probe(request):
-            return web.json_response({"ok": True})
+            return bridge.json_ok({"ok": True})
 
         app.router.add_post("/probe", probe)
         self.client = TestClient(TestServer(app))
@@ -42,6 +42,16 @@ class DesktopBridgeOriginTests(unittest.IsolatedAsyncioTestCase):
                 "Access-Control-Request-Headers": "content-type",
             },
         )
+        self.assertEqual(response.status, 403)
+
+    async def test_cross_origin_post_is_rejected(self):
+        response = await self.client.post(
+            "/probe", headers={"Origin": "https://evil.example"}, json={}
+        )
+        self.assertEqual(response.status, 403)
+
+    async def test_null_origin_is_rejected(self):
+        response = await self.client.post("/probe", headers={"Origin": "null"}, json={})
         self.assertEqual(response.status, 403)
 
     async def test_same_origin_request_is_allowed(self):
