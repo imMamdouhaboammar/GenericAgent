@@ -1,0 +1,22 @@
+name: Temporary desktop bridge security regression
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependency
+        run: python -m pip install "aiohttp>=3.9"
+      - name: Run desktop bridge origin tests
+        run: python -m unittest tests.test_desktop_bridge_origin -v
