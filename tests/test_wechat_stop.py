@@ -8,26 +8,29 @@ import time
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTENDS = ROOT / "frontends"
-_MISSING = object()
 
 
 class FakeAgent:
     def __init__(self):
         self.verbose = False
         self.abort_called = False
+        self.is_running = False
         self.put_called = threading.Event()
         self.display_queue = queue.Queue()
 
     def put_task(self, query, source="user", images=None):
+        self.is_running = True
         self.put_called.set()
         return self.display_queue
 
     def abort(self):
         self.abort_called = True
+        self.is_running = False
 
     def next_llm(self, n=-1):
         return None
@@ -76,31 +79,20 @@ class WeChatStopTests(unittest.TestCase):
         cls._tmp = tempfile.TemporaryDirectory()
         cls.addClassCleanup(cls._tmp.cleanup)
         cls.test_home = Path(cls._tmp.name)
-
         cls._module_name = "wechatapp_stop_test"
-        cls._saved_modules = {
-            name: sys.modules.get(name, _MISSING)
-            for name in (cls._module_name, "agentmain", "qrcode", "Crypto", "Crypto.Cipher")
-        }
-        cls.addClassCleanup(cls._restore_modules)
 
         agentmain = types.ModuleType("agentmain")
         agentmain.GeneraticAgent = FakeAgent
-        sys.modules["agentmain"] = agentmain
-
         qrcode = types.ModuleType("qrcode")
         qrcode.QRCode = object
         qrcode.make = lambda *args, **kwargs: None
-        sys.modules["qrcode"] = qrcode
-
         crypto = types.ModuleType("Crypto")
         cipher = types.ModuleType("Crypto.Cipher")
         cipher.AES = object
         crypto.Cipher = cipher
-        sys.modules["Crypto"] = crypto
-        sys.modules["Crypto.Cipher"] = cipher
 
         old_home = os.environ.get("HOME")
+        old_sys_path = sys.path[:]
         os.environ["HOME"] = str(cls.test_home)
         try:
             path = FRONTENDS / "wechatapp.py"
@@ -108,27 +100,28 @@ class WeChatStopTests(unittest.TestCase):
             if spec is None or spec.loader is None:
                 raise ImportError(f"failed to load {path}")
             module = importlib.util.module_from_spec(spec)
-            sys.modules[cls._module_name] = module
-            spec.loader.exec_module(module)
+            stubs = {
+                cls._module_name: module,
+                "agentmain": agentmain,
+                "qrcode": qrcode,
+                "Crypto": crypto,
+                "Crypto.Cipher": cipher,
+            }
+            with mock.patch.dict(sys.modules, stubs, clear=False):
+                spec.loader.exec_module(module)
             cls.wechat = module
         finally:
+            sys.path[:] = old_sys_path
             if old_home is None:
                 os.environ.pop("HOME", None)
             else:
                 os.environ["HOME"] = old_home
 
-    @classmethod
-    def _restore_modules(cls):
-        for name, old in cls._saved_modules.items():
-            if old is _MISSING:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = old
-
     def setUp(self):
         self.wechat._MODE = "agent"
         self.wechat._task_aborted.clear()
         self.wechat.agent.abort_called = False
+        self.wechat.agent.is_running = False
         self.wechat.agent.put_called.clear()
         self.wechat.agent.display_queue = queue.Queue()
         self.bot = FakeBot()
@@ -188,6 +181,21 @@ class WeChatStopTests(unittest.TestCase):
         self.assertTrue(self._wait_for_text("已停止"), "stop acknowledgement was not sent")
         time.sleep(0.05)
         self.assertEqual([], self.bot.sent_files)
+
+    def test_idle_stop_does_not_cancel_the_next_task(self):
+        self.assertFalse(self.wechat.agent.is_running)
+        self.wechat.on_message(self.bot, self._message("/stop"))
+        self.assertFalse(self.wechat.agent.abort_called)
+
+        self.wechat.on_message(self.bot, self._message("next task"))
+        self.assertTrue(self.wechat.agent.put_called.wait(1), "worker did not start")
+        self.wechat.agent.display_queue.put({
+            "done": "NEXT_TASK_OUTPUT",
+            "outputs": ["NEXT_TASK_OUTPUT"],
+        })
+
+        self.assertTrue(self._wait_for_text("NEXT_TASK_OUTPUT"), self.bot.sent_text)
+        self.assertFalse(any("已停止" in text for text in self.bot.sent_text), self.bot.sent_text)
 
 
 if __name__ == "__main__":
