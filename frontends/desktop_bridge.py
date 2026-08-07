@@ -1399,15 +1399,26 @@ async def ws_handler(request):
 # Transport layer: HTTP command/data API
 # ---------------------------------------------------------------------------
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
 def _origin_matches_host(request, origin: str) -> bool:
     if not origin:
         return True
     from urllib.parse import urlsplit
     try:
-        parsed = urlsplit(origin)
+        parsed_origin = urlsplit(origin)
+        parsed_host = urlsplit("//" + request.host)
     except ValueError:
         return False
-    return parsed.scheme in ("http", "https") and parsed.netloc.lower() == request.host.lower()
+    if parsed_origin.scheme not in ("http", "https"):
+        return False
+    origin_host = (parsed_origin.hostname or "").lower()
+    request_host = (parsed_host.hostname or "").lower()
+    bind_host = os.environ.get("BRIDGE_HOST", "127.0.0.1").strip().lower()
+    if bind_host in _LOOPBACK_HOSTS:
+        return origin_host in _LOOPBACK_HOSTS and request_host in _LOOPBACK_HOSTS
+    return parsed_origin.netloc.lower() == request.host.lower()
 
 
 def cors_headers(origin: str = ""):
