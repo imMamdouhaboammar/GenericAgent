@@ -29,9 +29,9 @@ jobs:
         with:
           ref: fix/agentmain-reject-unknown-cli
       - id: need
-        name: Check whether CLI guard is needed
+        name: Check whether option-shaped values are rejected
         run: |
-          if grep -q 'reflect extra arguments must be --key value pairs' agentmain.py; then
+          if grep -q "any(v.startswith('--') for v in _unknown\[1::2\])" agentmain.py; then
             echo 'apply=false' >> "$GITHUB_OUTPUT"
           else
             echo 'apply=true' >> "$GITHUB_OUTPUT"
@@ -40,7 +40,7 @@ jobs:
         if: steps.need.outputs.apply == 'true'
         with:
           python-version: "3.12"
-      - name: Reject unsupported CLI extras outside reflect mode
+      - name: Reject option-shaped reflect values
         if: steps.need.outputs.apply == 'true'
         run: |
           python - <<'PY'
@@ -48,10 +48,10 @@ jobs:
 
           path = Path('agentmain.py')
           text = path.read_text(encoding='utf-8')
-          old = '''    args, _unknown = parser.parse_known_args()\n    _extra_args = dict(zip([k.lstrip('-') for k in _unknown[::2]], _unknown[1::2])) if _unknown else {}\n'''
-          new = '''    args, _unknown = parser.parse_known_args()\n    if _unknown and not args.reflect:\n        parser.error(f"unrecognized arguments: {' '.join(_unknown)}")\n    if args.reflect and (len(_unknown) % 2 or any(not k.startswith('--') for k in _unknown[::2])):\n        parser.error("reflect extra arguments must be --key value pairs")\n    _extra_args = dict(zip([k.lstrip('-') for k in _unknown[::2]], _unknown[1::2])) if _unknown else {}\n'''
+          old = "    if args.reflect and (len(_unknown) % 2 or any(not k.startswith('--') for k in _unknown[::2])):\n"
+          new = "    if args.reflect and (len(_unknown) % 2 or any(not k.startswith('--') for k in _unknown[::2]) or any(v.startswith('--') for v in _unknown[1::2])):\n"
           if old not in text:
-              raise SystemExit('expected parser block not found')
+              raise SystemExit('expected reflect argument validation not found')
           path.write_text(text.replace(old, new), encoding='utf-8')
           PY
       - name: Verify patch
@@ -67,5 +67,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add agentmain.py
-          git commit -m "fix(cli): reject unsupported agentmain arguments"
+          git commit -m "fix(cli): reject option-shaped reflect values"
           git push origin HEAD:fix/agentmain-reject-unknown-cli
