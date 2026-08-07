@@ -446,6 +446,7 @@ def on_message(bot, msg):
                 return False
         def _send(show):
             nonlocal mi, last_send
+            if _task_aborted.get(uid): return False
             now = time.time()
             if mi >= 9 or not show.strip(): return False
             if mi and now - last_send < 6 * mi: return None
@@ -455,6 +456,7 @@ def on_message(bot, msg):
             done = []; turn = 1
             while True:
                 item = dq.get(timeout=300)
+                if _task_aborted.get(uid): break
                 if 'done' in item: break
                 if item.get('turn', turn) > turn:
                     outputs = item.get('outputs', [])
@@ -469,8 +471,10 @@ def on_message(bot, msg):
 
         if 'done' in item: result, done = item['done'], item.get('outputs', [])
         aborted = _task_aborted.pop(uid, False)
-        tag = '[已停止]' if aborted else '[任务已完成]'
-        rest = _clean('\n\n'.join(done[sent:] + ['\n\n' + tag]).strip())
+        if aborted:
+            _wx_send('[已停止]')
+            return
+        rest = _clean('\n\n'.join(done[sent:] + ['\n\n[任务已完成]']).strip())
         if rest: _wx_send(rest[-3000:])
 
         files = re.findall(r'\[FILE:([^\]]+)\]', result)
