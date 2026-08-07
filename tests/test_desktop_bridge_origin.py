@@ -58,6 +58,22 @@ class DesktopBridgeOriginTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.status, 403)
 
+    async def test_malformed_serialized_origins_are_rejected(self):
+        origin = str(self.client.make_url("/")).rstrip("/")
+        origins = (
+            f"{origin}/path",
+            f"{origin}?x=1",
+            origin.replace("http://", "http://user@", 1),
+            "http://127.0.0.1:notaport",
+            f"{origin}#fragment",
+        )
+        for candidate in origins:
+            with self.subTest(origin=candidate):
+                response = await self.client.post(
+                    "/probe", headers={"Origin": candidate}, json={}
+                )
+                self.assertEqual(response.status, 403)
+
     async def test_null_origin_is_rejected(self):
         response = await self.client.post("/probe", headers={"Origin": "null"}, json={})
         self.assertEqual(response.status, 403)
