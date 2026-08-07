@@ -32,11 +32,16 @@ class AgentMainCliArgumentTests(unittest.TestCase):
         self.assertIn("unrecognized arguments: --goal dummy-goal.json", result.stderr)
         self.assertNotIn("EOFError", result.stderr)
 
+    def test_reflect_requires_non_empty_script_path(self):
+        result = run_agentmain("--reflect", "")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--reflect requires a non-empty script path", result.stderr)
+
     def test_reflect_extras_require_complete_key_value_pairs(self):
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "reflect_exit.py"
             script.write_text("def check(): return '/exit'\n", encoding="utf-8")
-            for extras in (("--name",), ("--name", "--other")):
+            for extras in (("--name",), ("--name", "--other"), ("---name", "value"), ("--", "value")):
                 with self.subTest(extras=extras):
                     result = run_agentmain("--reflect", str(script), *extras)
                     self.assertEqual(result.returncode, 2)
