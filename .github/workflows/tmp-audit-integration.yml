@@ -44,7 +44,26 @@ jobs:
             git fetch origin "$branch:refs/remotes/origin/$branch"
             commits=$(git rev-list --reverse "$BASE..origin/$branch")
             for commit in $commits; do
-              git cherry-pick "$commit"
+              if git cherry-pick "$commit"; then
+                continue
+              fi
+              if [ "$branch" != "fix/desktop-session-persistence-race-upstream" ]; then
+                exit 1
+              fi
+              git checkout --ours frontends/desktop_bridge.py
+              git checkout "$commit" -- tests/test_desktop_session_persistence.py
+              python - <<'PY'
+          from pathlib import Path
+          path = Path('frontends/desktop_bridge.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''    def _persist_session(self, s: "Session"):\n        """Write a single session file. Cost is O(one session), independent of how many\n        sessions exist — this is the fix for the monolithic-file scaling problem."""\n        try:\n            self._sessions_dir.mkdir(parents=True, exist_ok=True)\n            with self.lock:\n                data = self._session_dict(s)\n            target = self._session_file(s.id)\n            tmp = target.with_suffix(target.suffix + ".tmp")\n            tmp.write_text(json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")\n            os.replace(tmp, target)  # atomic swap\n        except Exception as e:\n            print(f"[bridge] persist session {s.id} failed: {e}", file=sys.stderr)\n\n    def _delete_session_file(self, sid: str):\n        try:\n            f = self._session_file(sid)\n            if f.exists():\n                f.unlink()\n        except Exception as e:\n            print(f"[bridge] delete session file {sid} failed: {e}", file=sys.stderr)\n'''
+          new = '''    def _persist_session(self, s: "Session"):\n        """Write a single session file. Cost is O(one session), independent of how many\n        sessions exist — this is the fix for the monolithic-file scaling problem."""\n        try:\n            self._sessions_dir.mkdir(parents=True, exist_ok=True)\n            with self.lock:\n                if self.sessions.get(s.id) is not s:\n                    return\n                data = self._session_dict(s)\n                target = self._session_file(s.id)\n                tmp = target.with_suffix(target.suffix + ".tmp")\n                tmp.write_text(json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")\n                os.replace(tmp, target)  # atomic swap\n        except Exception as e:\n            print(f"[bridge] persist session {s.id} failed: {e}", file=sys.stderr)\n\n    def _delete_session_file(self, sid: str):\n        try:\n            with self.lock:\n                f = self._session_file(sid)\n                if f.exists():\n                    f.unlink()\n        except Exception as e:\n            print(f"[bridge] delete session file {sid} failed: {e}", file=sys.stderr)\n'''
+          if old not in text:
+              raise SystemExit('combined desktop persistence block not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+              git add frontends/desktop_bridge.py tests/test_desktop_session_persistence.py
+              git cherry-pick --continue
             done
           done
       - run: python -m pip install -e .
