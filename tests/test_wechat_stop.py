@@ -1,0 +1,194 @@
+import importlib.util
+import os
+import queue
+import sys
+import tempfile
+import threading
+import time
+import types
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+FRONTENDS = ROOT / "frontends"
+_MISSING = object()
+
+
+class FakeAgent:
+    def __init__(self):
+        self.verbose = False
+        self.abort_called = False
+        self.put_called = threading.Event()
+        self.display_queue = queue.Queue()
+
+    def put_task(self, query, source="user", images=None):
+        self.put_called.set()
+        return self.display_queue
+
+    def abort(self):
+        self.abort_called = True
+
+    def next_llm(self, n=-1):
+        return None
+
+    def list_llms(self):
+        return []
+
+    def get_llm_name(self):
+        return "fake"
+
+
+class FakeBot:
+    def __init__(self):
+        self.sent_text = []
+        self.sent_files = []
+        self.sent_event = threading.Event()
+
+    def extract_text(self, msg):
+        return "\n".join(
+            item.get("text_item", {}).get("text", "")
+            for item in msg.get("item_list", [])
+            if item.get("text_item")
+        )
+
+    def get_typing_ticket(self, uid, ctx):
+        return ""
+
+    def send_typing(self, *args, **kwargs):
+        return None
+
+    def send_text(self, uid, text, context_token=""):
+        self.sent_text.append(text)
+        self.sent_event.set()
+
+    def send_file(self, uid, path, context_token=""):
+        self.sent_files.append(path)
+
+    send_image = send_file
+    send_video = send_file
+
+
+class WeChatStopTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls._tmp.cleanup)
+        cls.test_home = Path(cls._tmp.name)
+
+        cls._module_name = "wechatapp_stop_test"
+        cls._saved_modules = {
+            name: sys.modules.get(name, _MISSING)
+            for name in (cls._module_name, "agentmain", "qrcode", "Crypto", "Crypto.Cipher")
+        }
+        cls.addClassCleanup(cls._restore_modules)
+
+        agentmain = types.ModuleType("agentmain")
+        agentmain.GeneraticAgent = FakeAgent
+        sys.modules["agentmain"] = agentmain
+
+        qrcode = types.ModuleType("qrcode")
+        qrcode.QRCode = object
+        qrcode.make = lambda *args, **kwargs: None
+        sys.modules["qrcode"] = qrcode
+
+        crypto = types.ModuleType("Crypto")
+        cipher = types.ModuleType("Crypto.Cipher")
+        cipher.AES = object
+        crypto.Cipher = cipher
+        sys.modules["Crypto"] = crypto
+        sys.modules["Crypto.Cipher"] = cipher
+
+        old_home = os.environ.get("HOME")
+        os.environ["HOME"] = str(cls.test_home)
+        try:
+            path = FRONTENDS / "wechatapp.py"
+            spec = importlib.util.spec_from_file_location(cls._module_name, path)
+            if spec is None or spec.loader is None:
+                raise ImportError(f"failed to load {path}")
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[cls._module_name] = module
+            spec.loader.exec_module(module)
+            cls.wechat = module
+        finally:
+            if old_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = old_home
+
+    @classmethod
+    def _restore_modules(cls):
+        for name, old in cls._saved_modules.items():
+            if old is _MISSING:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = old
+
+    def setUp(self):
+        self.wechat._MODE = "agent"
+        self.wechat._task_aborted.clear()
+        self.wechat.agent.abort_called = False
+        self.wechat.agent.put_called.clear()
+        self.wechat.agent.display_queue = queue.Queue()
+        self.bot = FakeBot()
+        self.uid = "user-1"
+
+    def _message(self, text):
+        return {
+            "from_user_id": self.uid,
+            "context_token": "ctx",
+            "item_list": [{"type": self.wechat.ITEM_TEXT, "text_item": {"text": text}}],
+        }
+
+    def _wait_for_text(self, needle, timeout=2):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if any(needle in text for text in self.bot.sent_text):
+                return True
+            self.bot.sent_event.wait(0.05)
+            self.bot.sent_event.clear()
+        return False
+
+    def test_stop_suppresses_buffered_turn_output(self):
+        self.wechat.on_message(self.bot, self._message("do work"))
+        self.assertTrue(self.wechat.agent.put_called.wait(1), "worker did not start")
+
+        self.wechat.on_message(self.bot, self._message("/stop"))
+        self.assertTrue(self.wechat.agent.abort_called)
+
+        self.wechat.agent.display_queue.put({
+            "turn": 2,
+            "outputs": ["LEAK_AFTER_STOP", "partial"],
+        })
+        self.wechat.agent.display_queue.put({
+            "done": "final",
+            "outputs": ["LEAK_AFTER_STOP"],
+        })
+
+        self.assertTrue(self._wait_for_text("已停止"), "stop acknowledgement was not sent")
+        self.assertFalse(
+            any("LEAK_AFTER_STOP" in text for text in self.bot.sent_text),
+            f"buffered output leaked after stop: {self.bot.sent_text}",
+        )
+
+    def test_stop_does_not_send_files_from_cancelled_result(self):
+        payload = self.test_home / "cancelled.txt"
+        payload.write_text("cancelled", encoding="utf-8")
+
+        self.wechat.on_message(self.bot, self._message("make a file"))
+        self.assertTrue(self.wechat.agent.put_called.wait(1), "worker did not start")
+
+        self.wechat.on_message(self.bot, self._message("/stop"))
+        self.wechat.agent.display_queue.put({
+            "done": f"[FILE:{payload}]",
+            "outputs": [],
+        })
+
+        self.assertTrue(self._wait_for_text("已停止"), "stop acknowledgement was not sent")
+        time.sleep(0.05)
+        self.assertEqual([], self.bot.sent_files)
+
+
+if __name__ == "__main__":
+    unittest.main()
