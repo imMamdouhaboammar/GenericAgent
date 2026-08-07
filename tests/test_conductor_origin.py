@@ -61,6 +61,13 @@ class ConductorBrowserOriginTests(unittest.TestCase):
         r = self.client.post("/probe", headers={"Origin": "https://evil.example"})
         self.assertEqual(r.status_code, 403)
 
+    def test_dns_rebinding_origin_is_rejected_on_loopback(self):
+        r = self.client.post(
+            "/probe",
+            headers={"Host": "evil.example:8900", "Origin": "https://evil.example"},
+        )
+        self.assertEqual(r.status_code, 403)
+
     def test_desktop_origin_same_hostname_different_port_is_allowed(self):
         origin = "http://127.0.0.1:14168"
         r = self.client.post("/probe", headers={"Origin": origin})
