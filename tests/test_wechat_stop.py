@@ -20,6 +20,7 @@ class FakeAgent:
         self.verbose = False
         self.is_running = False
         self.abort_called = False
+        self.abort_observer = None
         self.put_called = threading.Event()
         self.display_queue = queue.Queue()
 
@@ -30,6 +31,8 @@ class FakeAgent:
 
     def abort(self):
         self.abort_called = True
+        if self.abort_observer:
+            self.abort_observer()
 
     def next_llm(self, n=-1):
         return None
@@ -121,6 +124,7 @@ class WeChatStopTests(unittest.TestCase):
         self.wechat._task_aborted.clear()
         self.wechat.agent.is_running = False
         self.wechat.agent.abort_called = False
+        self.wechat.agent.abort_observer = None
         self.wechat.agent.put_called.clear()
         self.wechat.agent.display_queue = queue.Queue()
         self.bot = FakeBot()
@@ -196,6 +200,16 @@ class WeChatStopTests(unittest.TestCase):
 
         self.assertTrue(self._wait_for_text("NEXT_TASK_OK"), self.bot.sent_text)
         self.assertFalse(any("已停止" in text for text in self.bot.sent_text))
+
+    def test_abort_flag_is_armed_before_agent_abort(self):
+        self.wechat.on_message(self.bot, self._message("race task"))
+        self.assertTrue(self.wechat.agent.put_called.wait(1), "worker did not start")
+        observed = []
+        self.wechat.agent.abort_observer = lambda: observed.append(bool(self.wechat._task_aborted.get(self.uid)))
+
+        self.wechat.on_message(self.bot, self._message("/stop"))
+
+        self.assertEqual([True], observed)
 
 
 if __name__ == "__main__":
