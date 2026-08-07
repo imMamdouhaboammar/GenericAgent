@@ -197,7 +197,7 @@ class AgentManager:
                 "llm_history": llm_hist}
 
     def _session_file(self, sid: str) -> Path:
-        if not isinstance(sid, str) or not sid:
+        if not isinstance(sid, str) or not sid or "/" in sid or '\\' in sid:
             raise ValueError("invalid session id")
         root = self._sessions_dir.resolve()
         target = (root / f"{sid}.json").resolve()
