@@ -72,6 +72,17 @@ class AgentLoopBadJsonTests(unittest.TestCase):
                 self.assertIn("file_read", handler.next_prompts[0])
                 self.assertIn("JSON object", handler.next_prompts[0])
 
+    def test_malformed_argument_retry_preview_is_bounded(self):
+        arguments = '{"path":"' + ('x' * 20_000)
+        result, handler = self._run(arguments)
+
+        self.assertEqual(result, {"result": "MAX_TURNS_EXCEEDED"})
+        self.assertEqual(len(handler.next_prompts), 1)
+        prompt = handler.next_prompts[0]
+        self.assertLess(len(prompt), 2_000)
+        self.assertIn("truncated", prompt.lower())
+        self.assertIn(str(len(arguments)), prompt)
+
 
 if __name__ == "__main__":
     unittest.main()
