@@ -13,8 +13,9 @@ if str(FRONTENDS) not in sys.path:
     sys.path.insert(0, str(FRONTENDS))
 
 spec = importlib.util.spec_from_file_location("desktop_bridge", FRONTENDS / "desktop_bridge.py")
-bridge = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
+bridge = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = bridge
 spec.loader.exec_module(bridge)
 
 
