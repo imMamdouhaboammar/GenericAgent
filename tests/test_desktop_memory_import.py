@@ -56,6 +56,26 @@ class DesktopMemoryImportBoundaryTests(unittest.TestCase):
             self.assertFalse(leaked.exists())
             self.assertEqual(result["memoryCopied"], 0)
 
+    def test_memory_import_does_not_follow_external_directory_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            destination = root / "destination"
+            memory = source / "memory"
+            external = root / "outside-dir"
+            memory.mkdir(parents=True)
+            external.mkdir()
+            (external / "secret.txt").write_text("outside-directory-secret", encoding="utf-8")
+            try:
+                (memory / "linked").symlink_to(external, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symlink unavailable: {exc}")
+
+            result = bridge._import_memory_from(str(source), str(destination))
+
+            self.assertFalse((destination / "memory" / "linked").exists())
+            self.assertEqual(result["memoryCopied"], 0)
+
     def test_model_response_import_does_not_follow_external_file_symlink(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
