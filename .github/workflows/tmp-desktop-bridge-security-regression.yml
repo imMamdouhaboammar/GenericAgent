@@ -20,3 +20,81 @@ jobs:
         run: python -m pip install "aiohttp>=3.9"
       - name: Run desktop bridge origin tests
         run: python -m unittest tests.test_desktop_bridge_origin -v
+
+  patch:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/desktop-bridge-origin-guard
+      - id: need
+        name: Check whether rebinding guard is needed
+        run: |
+          if grep -q '_LOOPBACK_HOSTS' frontends/desktop_bridge.py; then
+            echo 'apply=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'apply=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-python@v5
+        if: steps.need.outputs.apply == 'true'
+        with:
+          python-version: "3.12"
+      - name: Harden loopback origin matching
+        if: steps.need.outputs.apply == 'true'
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('frontends/desktop_bridge.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''def _origin_matches_host(request, origin: str) -> bool:
+              if not origin:
+                  return True
+              from urllib.parse import urlsplit
+              try:
+                  parsed = urlsplit(origin)
+              except ValueError:
+                  return False
+              return parsed.scheme in ("http", "https") and parsed.netloc.lower() == request.host.lower()
+          '''
+          new = '''_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+          def _origin_matches_host(request, origin: str) -> bool:
+              if not origin:
+                  return True
+              from urllib.parse import urlsplit
+              try:
+                  parsed_origin = urlsplit(origin)
+                  parsed_host = urlsplit("//" + request.host)
+              except ValueError:
+                  return False
+              if parsed_origin.scheme not in ("http", "https"):
+                  return False
+              origin_host = (parsed_origin.hostname or "").lower()
+              request_host = (parsed_host.hostname or "").lower()
+              bind_host = os.environ.get("BRIDGE_HOST", "127.0.0.1").strip().lower()
+              if bind_host in _LOOPBACK_HOSTS:
+                  return origin_host in _LOOPBACK_HOSTS and request_host in _LOOPBACK_HOSTS
+              return parsed_origin.netloc.lower() == request.host.lower()
+          '''
+          if old not in text:
+              raise SystemExit('expected origin matcher not found')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+      - name: Verify patch
+        if: steps.need.outputs.apply == 'true'
+        run: |
+          python -m py_compile frontends/desktop_bridge.py tests/test_desktop_bridge_origin.py
+          python -m pip install "aiohttp>=3.9"
+          python -m unittest tests.test_desktop_bridge_origin -v
+          git diff --check
+      - name: Commit patch
+        if: steps.need.outputs.apply == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontends/desktop_bridge.py
+          git commit -m "fix(security): reject rebinding origins on loopback bridge"
+          git push origin HEAD:fix/desktop-bridge-origin-guard
