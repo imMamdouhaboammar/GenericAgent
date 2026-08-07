@@ -76,7 +76,11 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema,
                     if not isinstance(args, dict):
                         raise TypeError("tool arguments must be a JSON object")
                 except (json.JSONDecodeError, TypeError):
-                    tool_calls.append({'tool_name': 'bad_json', 'args': {'msg': f"Tool {tc.function.name} arguments are invalid JSON or are not a JSON object: {raw!r}. Retry with a valid JSON object."}, 'id': tc.id})
+                    raw_text = raw if isinstance(raw, str) else str(raw)
+                    raw_len = len(raw_text)
+                    raw_preview = raw_text[:800]
+                    if raw_len > len(raw_preview): raw_preview += f"... [truncated, total={raw_len} chars]"
+                    tool_calls.append({'tool_name': 'bad_json', 'args': {'msg': f"Tool {tc.function.name} arguments are invalid JSON or are not a JSON object: {raw_preview!r}. Retry with a valid JSON object."}, 'id': tc.id})
                     continue
                 tool_calls.append({'tool_name': tc.function.name, 'args': args, 'id': tc.id})
        
