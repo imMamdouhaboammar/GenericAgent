@@ -50,6 +50,14 @@ class DesktopBridgeOriginTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.status, 403)
 
+    async def test_dns_rebinding_origin_is_rejected_on_loopback(self):
+        response = await self.client.post(
+            "/probe",
+            headers={"Host": "evil.example:14168", "Origin": "https://evil.example:14168"},
+            json={},
+        )
+        self.assertEqual(response.status, 403)
+
     async def test_null_origin_is_rejected(self):
         response = await self.client.post("/probe", headers={"Origin": "null"}, json={})
         self.assertEqual(response.status, 403)
