@@ -118,6 +118,9 @@ async def lifespan(app: FastAPI):
     yield
 
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
 def _origin_matches_host(origin: str, host: str) -> bool:
     try:
         parsed_origin = urlsplit(origin)
@@ -126,8 +129,11 @@ def _origin_matches_host(origin: str, host: str) -> bool:
         return False
     if parsed_origin.scheme not in ("http", "https"):
         return False
-    return bool(parsed_origin.hostname and parsed_host.hostname and
-                parsed_origin.hostname.lower() == parsed_host.hostname.lower())
+    origin_host = (parsed_origin.hostname or "").lower()
+    request_host = (parsed_host.hostname or "").lower()
+    if args.host.lower() in _LOOPBACK_HOSTS:
+        return origin_host in _LOOPBACK_HOSTS and request_host in _LOOPBACK_HOSTS
+    return bool(origin_host and request_host and origin_host == request_host)
 
 
 def _cors_headers(origin: str) -> dict:
