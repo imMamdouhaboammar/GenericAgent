@@ -121,19 +121,39 @@ async def lifespan(app: FastAPI):
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
-def _origin_matches_host(origin: str, host: str) -> bool:
+def _origin_hostname(origin: str) -> str:
+    if origin != origin.strip(): return ""
     try:
-        parsed_origin = urlsplit(origin)
-        parsed_host = urlsplit("//" + host)
+        parsed = urlsplit(origin)
+        parsed.port
     except ValueError:
+        return ""
+    if (parsed.scheme.lower() not in ("http", "https") or not parsed.hostname or
+            parsed.username is not None or parsed.password is not None or
+            parsed.path not in ("", "/") or parsed.query or parsed.fragment):
+        return ""
+    return parsed.hostname.lower()
+
+
+def _request_hostname(host: str) -> str:
+    try:
+        parsed = urlsplit("//" + host)
+        parsed.port
+    except ValueError:
+        return ""
+    if parsed.username is not None or parsed.password is not None:
+        return ""
+    return (parsed.hostname or "").lower()
+
+
+def _origin_matches_host(origin: str, host: str) -> bool:
+    origin_host = _origin_hostname(origin)
+    request_host = _request_hostname(host)
+    if not origin_host or not request_host:
         return False
-    if parsed_origin.scheme not in ("http", "https"):
-        return False
-    origin_host = (parsed_origin.hostname or "").lower()
-    request_host = (parsed_host.hostname or "").lower()
     if args.host.lower() in _LOOPBACK_HOSTS:
         return origin_host in _LOOPBACK_HOSTS and request_host in _LOOPBACK_HOSTS
-    return bool(origin_host and request_host and origin_host == request_host)
+    return origin_host == request_host
 
 
 def _cors_headers(origin: str) -> dict:
