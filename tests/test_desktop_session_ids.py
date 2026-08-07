@@ -78,8 +78,27 @@ class DesktopSessionIdPersistenceTests(unittest.TestCase):
         self.assertNotIn(sid, self.manager.sessions)
         self.assertFalse(escaped.exists())
 
+    def test_import_rejects_normalized_alias_that_collides_with_existing_session(self):
+        safe_id = "sess-safe123"
+        alias_id = f"nested/../{safe_id}"
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            self._write_session(source, safe_id)
+            first = self.manager.import_sessions(str(source))
+            self._write_session(source, alias_id)
+            second = self.manager.import_sessions(str(source))
+
+        persisted = json.loads(
+            (self.manager._sessions_dir / f"{safe_id}.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(first["sessionsAdded"], 1)
+        self.assertEqual(second["sessionsAdded"], 0)
+        self.assertEqual(second["sessionsSkipped"], 1)
+        self.assertNotIn(alias_id, self.manager.sessions)
+        self.assertEqual(persisted["id"], safe_id)
+
     def test_import_keeps_valid_session_ids(self):
-        sid = "sess-safe123"
+        sid = "sess-safe456"
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             self._write_session(source, sid)
