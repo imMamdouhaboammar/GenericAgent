@@ -68,6 +68,22 @@ class ConductorBrowserOriginTests(unittest.TestCase):
         )
         self.assertEqual(r.status_code, 403)
 
+    def test_malformed_serialized_origins_are_rejected(self):
+        origins = (
+            "http://127.0.0.1:14168/path",
+            "http://127.0.0.1:14168?x=1",
+            "http://user@127.0.0.1:14168",
+            "http://127.0.0.1:notaport",
+            "http://127.0.0.1:14168#fragment",
+        )
+        for origin in origins:
+            with self.subTest(origin=origin):
+                r = self.client.post(
+                    "/probe",
+                    headers={"Host": "127.0.0.1:8900", "Origin": origin},
+                )
+                self.assertEqual(r.status_code, 403)
+
     def test_desktop_origin_same_hostname_different_port_is_allowed(self):
         origin = "http://127.0.0.1:14168"
         r = self.client.post("/probe", headers={"Origin": origin})
