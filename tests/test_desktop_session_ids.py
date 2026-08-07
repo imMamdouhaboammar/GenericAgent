@@ -97,6 +97,18 @@ class DesktopSessionIdPersistenceTests(unittest.TestCase):
         self.assertNotIn(alias_id, self.manager.sessions)
         self.assertEqual(persisted["id"], safe_id)
 
+    def test_import_rejects_windows_style_path_separator(self):
+        sid = r"nested\..\sess-safe123"
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            self._write_session(source, sid)
+
+            result = self.manager.import_sessions(str(source))
+
+        self.assertEqual(result["sessionsAdded"], 0)
+        self.assertEqual(result["sessionsSkipped"], 1)
+        self.assertNotIn(sid, self.manager.sessions)
+
     def test_import_keeps_valid_session_ids(self):
         sid = "sess-safe456"
         with tempfile.TemporaryDirectory() as tmp:
