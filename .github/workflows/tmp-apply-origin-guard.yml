@@ -1,0 +1,84 @@
+name: Temporary apply desktop bridge origin guard
+
+on:
+  push:
+    branches:
+      - fix/desktop-bridge-origin-guard
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: contains(github.event.head_commit.message, 'enable one-shot origin guard patch')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/desktop-bridge-origin-guard
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Apply minimal origin guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('frontends/desktop_bridge.py')
+          text = path.read_text(encoding='utf-8')
+          start = text.index('def cors_headers():')
+          end = text.index('\n\nasync def read_json', start)
+          replacement = '''def _origin_matches_host(request, origin: str) -> bool:
+              if not origin:
+                  return True
+              from urllib.parse import urlsplit
+              try:
+                  parsed = urlsplit(origin)
+              except ValueError:
+                  return False
+              return parsed.scheme in ("http", "https") and parsed.netloc.lower() == request.host.lower()
+
+
+          def cors_headers(origin: str = ""):
+              if not origin:
+                  return {}
+              return {
+                  "Access-Control-Allow-Origin": origin,
+                  "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+                  "Access-Control-Allow-Headers": "Content-Type",
+                  "Vary": "Origin",
+              }
+
+
+          @web.middleware
+          async def cors_middleware(request, handler):
+              origin = request.headers.get("Origin", "")
+              if origin and not _origin_matches_host(request, origin):
+                  return web.json_response({"ok": False, "error": "cross-origin request rejected"}, status=403)
+              headers = cors_headers(origin)
+              if request.method == "OPTIONS":
+                  return web.Response(status=204, headers=headers)
+              resp = await handler(request)
+              for k, v in headers.items():
+                  resp.headers[k] = v
+              return resp
+
+
+          def json_ok(data: dict, status: int = 200):
+              return web.json_response(data, status=status, dumps=lambda x: json.dumps(x, ensure_ascii=False, default=str))
+          '''
+          path.write_text(text[:start] + replacement + text[end:], encoding='utf-8')
+          PY
+      - name: Syntax check
+        run: python -m py_compile frontends/desktop_bridge.py tests/test_desktop_bridge_origin.py
+      - name: Install test dependency
+        run: python -m pip install "aiohttp>=3.9"
+      - name: Run regression tests
+        run: python -m unittest tests.test_desktop_bridge_origin -v
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontends/desktop_bridge.py
+          git commit -m "fix(security): restrict desktop bridge to same-origin browsers"
+          git push origin HEAD:fix/desktop-bridge-origin-guard
