@@ -401,8 +401,8 @@ def on_message(bot, msg):
         return
     if text in ('/stop', '/abort'):
         if agent.is_running:
-            agent.abort()
             _task_aborted[uid] = True
+            agent.abort()
             print(f'[WX] /stop set _task_aborted[{uid}]', file=sys.__stdout__)
         else:
             _task_aborted.pop(uid, None)
