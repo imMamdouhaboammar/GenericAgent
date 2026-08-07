@@ -64,6 +64,20 @@ class DesktopSessionIdPersistenceTests(unittest.TestCase):
         self.assertNotIn("../../escape", self.manager.sessions)
         self.assertFalse(escaped.exists())
 
+    def test_import_rejects_absolute_id_without_writing_outside_store(self):
+        sid = str(_TEST_GA_PATH / "absolute-escape")
+        escaped = Path(f"{sid}.json")
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            self._write_session(source, sid)
+
+            result = self.manager.import_sessions(str(source))
+
+        self.assertEqual(result["sessionsAdded"], 0)
+        self.assertEqual(result["sessionsSkipped"], 1)
+        self.assertNotIn(sid, self.manager.sessions)
+        self.assertFalse(escaped.exists())
+
     def test_import_keeps_valid_session_ids(self):
         sid = "sess-safe123"
         with tempfile.TemporaryDirectory() as tmp:
