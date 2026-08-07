@@ -1,3 +1,4 @@
+# Verification-only workflow for the temporary combined audit branch.
 name: Temporary audited fixes integration
 
 on:
