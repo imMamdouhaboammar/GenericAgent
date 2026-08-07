@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fix/desktop-bridge-origin-guard
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
