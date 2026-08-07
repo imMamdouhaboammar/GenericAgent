@@ -400,9 +400,12 @@ def on_message(bot, msg):
         bot.send_text(uid, f'模式 → {_MODE}', context_token=ctx)
         return
     if text in ('/stop', '/abort'):
-        agent.abort()
-        _task_aborted[uid] = True
-        print(f'[WX] /stop set _task_aborted[{uid}]', file=sys.__stdout__)
+        if agent.is_running:
+            _task_aborted[uid] = True
+            agent.abort()
+            print(f'[WX] /stop set _task_aborted[{uid}]', file=sys.__stdout__)
+        else:
+            _task_aborted.pop(uid, None)
         return
     if text.startswith('/llm'):
         args = text.split()
