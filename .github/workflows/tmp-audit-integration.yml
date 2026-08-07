@@ -66,7 +66,7 @@ jobs:
               git cherry-pick --continue
             done
           done
-      - run: python -m pip install -e .
+      - run: python -m pip install -e . fastapi httpx
       - run: python -m py_compile agent_loop.py agentmain.py ga_cli/cli.py frontends/desktop_bridge.py frontends/conductor.py frontends/wechatapp.py
       - run: python -m unittest discover -s tests -v
       - run: git diff --check ${{ github.event.pull_request.base.sha }} HEAD
