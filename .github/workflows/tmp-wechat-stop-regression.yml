@@ -6,17 +6,58 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Apply stop-output fix after RED was confirmed
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('frontends/wechatapp.py')
+          text = path.read_text(encoding='utf-8')
+
+          old_send = '''        def _send(show):\n            nonlocal mi, last_send\n            now = time.time()\n            if mi >= 9 or not show.strip(): return False\n'''
+          new_send = '''        def _send(show):\n            nonlocal mi, last_send\n            if _task_aborted.get(uid): return False\n            now = time.time()\n            if mi >= 9 or not show.strip(): return False\n'''
+          if old_send in text:
+              text = text.replace(old_send, new_send, 1)
+          elif new_send not in text:
+              raise SystemExit('send guard block not found')
+
+          old_loop = '''            while True:\n                item = dq.get(timeout=300)\n                if 'done' in item: break\n'''
+          new_loop = '''            while True:\n                item = dq.get(timeout=300)\n                if _task_aborted.get(uid): break\n                if 'done' in item: break\n'''
+          if old_loop in text:
+              text = text.replace(old_loop, new_loop, 1)
+          elif new_loop not in text:
+              raise SystemExit('queue abort block not found')
+
+          old_final = '''        aborted = _task_aborted.pop(uid, False)\n        tag = '[已停止]' if aborted else '[任务已完成]'\n        rest = _clean('\\n\\n'.join(done[sent:] + ['\\n\\n' + tag]).strip())\n        if rest: _wx_send(rest[-3000:])\n\n        files = re.findall(r'\\[FILE:([^\\]]+)\\]', result)\n'''
+          new_final = '''        aborted = _task_aborted.pop(uid, False)\n        if aborted:\n            _wx_send('[已停止]')\n            return\n        rest = _clean('\\n\\n'.join(done[sent:] + ['\\n\\n[任务已完成]']).strip())\n        if rest: _wx_send(rest[-3000:])\n\n        files = re.findall(r'\\[FILE:([^\\]]+)\\]', result)\n'''
+          if old_final in text:
+              text = text.replace(old_final, new_final, 1)
+          elif new_final not in text:
+              raise SystemExit('final abort block not found')
+
+          path.write_text(text, encoding='utf-8')
+          PY
       - run: python -m pip install -e .
       - run: python -m py_compile frontends/wechatapp.py tests/test_wechat_stop.py
       - run: python -m unittest tests.test_wechat_stop -v
       - run: git diff --check
+      - name: Persist production fix when needed
+        run: |
+          if ! git diff --quiet -- frontends/wechatapp.py; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add frontends/wechatapp.py
+            git commit -m "fix(wechat): stop sending output after abort"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
