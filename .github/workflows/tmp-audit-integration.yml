@@ -1,0 +1,59 @@
+name: Temporary audited fixes integration
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Combine clean contribution branches
+        run: |
+          set -euxo pipefail
+          if git log -1 --pretty=%s | grep -q '^integration:'; then
+            exit 0
+          fi
+          BASE=d946498bcf873c3f38e32807c924a58c0d48f962
+          branches=(
+            fix/desktop-bridge-origin-guard-upstream
+            fix/conductor-browser-origin-guard-upstream
+            fix/agentmain-reject-unknown-cli-upstream
+            fix/desktop-session-id-path-traversal-upstream
+            fix/memory-import-symlink-boundary-upstream
+            fix/desktop-session-persistence-race-upstream
+            fix/agent-loop-invalid-tool-json-upstream
+            fix/agent-loop-no-tool-completion-upstream
+            fix/wechat-stop-suppresses-output-upstream
+            fix/ga-cli-current-python-upstream
+          )
+          for branch in "${branches[@]}"; do
+            git fetch origin "$branch:refs/remotes/origin/$branch"
+            commits=$(git rev-list --reverse "$BASE..origin/$branch")
+            for commit in $commits; do
+              git cherry-pick "$commit"
+            done
+          done
+      - run: python -m pip install -e .
+      - run: python -m py_compile agent_loop.py agentmain.py ga_cli/cli.py frontends/desktop_bridge.py frontends/conductor.py frontends/wechatapp.py
+      - run: python -m unittest discover -s tests -v
+      - run: git diff --check ${{ github.event.pull_request.base.sha }} HEAD
+      - name: Persist combined integration branch
+        run: |
+          if ! git log -1 --pretty=%s | grep -q '^integration:'; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "integration: combine audited fixes"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
