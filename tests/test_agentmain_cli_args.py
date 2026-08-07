@@ -36,9 +36,11 @@ class AgentMainCliArgumentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "reflect_exit.py"
             script.write_text("def check(): return '/exit'\n", encoding="utf-8")
-            result = run_agentmain("--reflect", str(script), "--name")
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("reflect extra arguments must be --key value pairs", result.stderr)
+            for extras in (("--name",), ("--name", "--other")):
+                with self.subTest(extras=extras):
+                    result = run_agentmain("--reflect", str(script), *extras)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn("reflect extra arguments must be --key value pairs", result.stderr)
 
     def test_reflect_key_value_extras_remain_supported(self):
         with tempfile.TemporaryDirectory() as tmp:
