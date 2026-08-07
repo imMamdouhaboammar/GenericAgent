@@ -78,11 +78,17 @@ class ConductorBrowserOriginTests(unittest.TestCase):
 
     def test_cross_origin_websocket_is_rejected(self):
         with self.assertRaises(WebSocketDisconnect):
-            with self.client.websocket_connect("/ws", headers={"Origin": "https://evil.example"}):
+            with self.client.websocket_connect(
+                "/ws",
+                headers={"Host": "127.0.0.1:8900", "Origin": "https://evil.example"},
+            ):
                 pass
 
     def test_desktop_origin_websocket_is_allowed(self):
-        with self.client.websocket_connect("/ws", headers={"Origin": "http://127.0.0.1:14168"}) as ws:
+        with self.client.websocket_connect(
+            "/ws",
+            headers={"Host": "127.0.0.1:8900", "Origin": "http://127.0.0.1:14168"},
+        ) as ws:
             self.assertEqual(ws.receive_text(), "ok")
 
 
