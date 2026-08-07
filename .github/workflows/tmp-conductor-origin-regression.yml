@@ -1,0 +1,22 @@
+name: Temporary conductor origin regression
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: python -m pip install -e . fastapi httpx
+      - name: Run conductor origin regression tests
+        run: python -m unittest tests.test_conductor_origin -v
