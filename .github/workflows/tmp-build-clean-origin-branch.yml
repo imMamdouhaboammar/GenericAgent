@@ -1,0 +1,39 @@
+name: Temporary build clean origin-guard branch
+
+on:
+  push:
+    branches:
+      - fix/desktop-bridge-origin-guard
+
+permissions:
+  contents: write
+
+jobs:
+  build-clean:
+    if: contains(github.event.head_commit.message, 'build clean origin guard branch')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/desktop-bridge-origin-guard
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build clean branch from main
+        run: |
+          git fetch origin main fix/desktop-bridge-origin-guard fix/desktop-bridge-origin-guard-upstream
+          git checkout -B fix/desktop-bridge-origin-guard-upstream origin/main
+          git checkout origin/fix/desktop-bridge-origin-guard -- frontends/desktop_bridge.py tests/test_desktop_bridge_origin.py
+      - name: Verify copied patch
+        run: |
+          python -m py_compile frontends/desktop_bridge.py tests/test_desktop_bridge_origin.py
+          python -m pip install "aiohttp>=3.9"
+          python -m unittest tests.test_desktop_bridge_origin -v
+      - name: Commit clean contribution
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontends/desktop_bridge.py tests/test_desktop_bridge_origin.py
+          git commit -m "fix(security): restrict desktop bridge to same-origin browsers"
+          git push origin HEAD:fix/desktop-bridge-origin-guard-upstream
