@@ -1,0 +1,59 @@
+name: Temporary apply desktop session ID fix
+
+on:
+  push:
+    branches:
+      - fix/desktop-session-id-path-traversal
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/desktop-session-id-path-traversal
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply minimal persistence-boundary fix
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('frontends/desktop_bridge.py')
+          text = path.read_text(encoding='utf-8')
+
+          old = '''    def _session_file(self, sid: str) -> Path:\n        return self._sessions_dir / f"{sid}.json"\n\n    def _persist_session(self, s: "Session"):\n        """Write a single session file. Cost is O(one session), independent of how many\n        sessions exist — this is the fix for the monolithic-file scaling problem."""\n        try:\n            self._sessions_dir.mkdir(parents=True, exist_ok=True)\n            with self.lock:\n                data = self._session_dict(s)\n            tmp = self._sessions_dir / f"{s.id}.json.tmp"\n            tmp.write_text(json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")\n            os.replace(tmp, self._session_file(s.id))  # atomic swap\n'''
+          new = '''    def _session_file(self, sid: str) -> Path:\n        if not isinstance(sid, str) or not sid:\n            raise ValueError("invalid session id")\n        root = self._sessions_dir.resolve()\n        target = (root / f"{sid}.json").resolve()\n        if target.parent != root:\n            raise ValueError(f"invalid session id: {sid!r}")\n        return target\n\n    def _persist_session(self, s: "Session"):\n        """Write a single session file. Cost is O(one session), independent of how many\n        sessions exist — this is the fix for the monolithic-file scaling problem."""\n        try:\n            self._sessions_dir.mkdir(parents=True, exist_ok=True)\n            with self.lock:\n                data = self._session_dict(s)\n            target = self._session_file(s.id)\n            tmp = target.with_suffix(target.suffix + ".tmp")\n            tmp.write_text(json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")\n            os.replace(tmp, target)  # atomic swap\n'''
+          if old not in text:
+              raise SystemExit('session persistence block not found')
+          text = text.replace(old, new, 1)
+
+          old = '''    def _session_from_item(self, item: dict) -> "Session":\n        msgs = item.get("messages", [])\n        return Session(id=item["id"], title=item.get("title", "New chat"),\n'''
+          new = '''    def _session_from_item(self, item: dict) -> "Session":\n        sid = item["id"]\n        self._session_file(sid)\n        msgs = item.get("messages", [])\n        return Session(id=sid, title=item.get("title", "New chat"),\n'''
+          if old not in text:
+              raise SystemExit('session load block not found')
+          text = text.replace(old, new, 1)
+          text = text.replace('plan_path=_sanitize_desktop_plan_path(item["id"], item.get("plan_path") or ""),',
+                              'plan_path=_sanitize_desktop_plan_path(sid, item.get("plan_path") or ""),', 1)
+
+          old = '''                sid = item.get("id")\n                if not sid or sid in self.sessions:\n                    skipped += 1\n                    continue\n                sess = self._session_from_item(item)\n'''
+          new = '''                sid = item.get("id")\n                if not sid or sid in self.sessions:\n                    skipped += 1\n                    continue\n                try:\n                    self._session_file(sid)\n                except ValueError:\n                    skipped += 1\n                    continue\n                sess = self._session_from_item(item)\n'''
+          if old not in text:
+              raise SystemExit('session import block not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+      - run: python -m py_compile frontends/desktop_bridge.py tests/test_desktop_session_ids.py
+      - run: python -m unittest tests.test_desktop_session_ids -v
+      - run: git diff --check
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontends/desktop_bridge.py
+          git commit -m "fix(desktop): validate imported session IDs"
+          git push origin HEAD:fix/desktop-session-id-path-traversal
