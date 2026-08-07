@@ -1402,19 +1402,42 @@ async def ws_handler(request):
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
+def _origin_parts(origin: str):
+    if origin != origin.strip(): return None
+    from urllib.parse import urlsplit
+    try:
+        parsed = urlsplit(origin)
+        parsed.port
+    except ValueError:
+        return None
+    if (parsed.scheme.lower() not in ("http", "https") or not parsed.hostname or
+            parsed.username is not None or parsed.password is not None or
+            parsed.path or parsed.query or parsed.fragment):
+        return None
+    return parsed
+
+
+def _request_host_parts(host: str):
+    from urllib.parse import urlsplit
+    try:
+        parsed = urlsplit("//" + host)
+        parsed.port
+    except ValueError:
+        return None
+    if parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment:
+        return None
+    return parsed if parsed.hostname else None
+
+
 def _origin_matches_host(request, origin: str) -> bool:
     if not origin:
         return True
-    from urllib.parse import urlsplit
-    try:
-        parsed_origin = urlsplit(origin)
-        parsed_host = urlsplit("//" + request.host)
-    except ValueError:
+    parsed_origin = _origin_parts(origin)
+    parsed_host = _request_host_parts(request.host)
+    if parsed_origin is None or parsed_host is None:
         return False
-    if parsed_origin.scheme not in ("http", "https"):
-        return False
-    origin_host = (parsed_origin.hostname or "").lower()
-    request_host = (parsed_host.hostname or "").lower()
+    origin_host = parsed_origin.hostname.lower()
+    request_host = parsed_host.hostname.lower()
     bind_host = os.environ.get("BRIDGE_HOST", "127.0.0.1").strip().lower()
     if bind_host in _LOOPBACK_HOSTS:
         return origin_host in _LOOPBACK_HOSTS and request_host in _LOOPBACK_HOSTS
