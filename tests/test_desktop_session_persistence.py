@@ -25,8 +25,11 @@ class DesktopSessionPersistenceTests(unittest.TestCase):
         cls._old_module = sys.modules.get(cls._module_name, _MISSING)
         old_ga_root = os.environ.get("GA_ROOT")
         old_argv = sys.argv[:]
+        old_sys_path = sys.path[:]
         os.environ["GA_ROOT"] = str(cls.test_ga_path)
         sys.argv = [sys.argv[0]]
+        sys.path.insert(0, str(ROOT))
+        sys.path.insert(0, str(FRONTENDS))
         try:
             path = FRONTENDS / "desktop_bridge.py"
             spec = importlib.util.spec_from_file_location(cls._module_name, path)
@@ -38,6 +41,7 @@ class DesktopSessionPersistenceTests(unittest.TestCase):
             cls.bridge = module
         finally:
             sys.argv = old_argv
+            sys.path[:] = old_sys_path
             if old_ga_root is None:
                 os.environ.pop("GA_ROOT", None)
             else:
